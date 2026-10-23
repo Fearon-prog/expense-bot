@@ -1,0 +1,8 @@
+# Нормализация переводов строк: bat/vbs-файлы должны оставаться с CRLF,
+# иначе cmd.exe на Windows ломает их разбор.
+* text=auto
+*.bat text eol=crlf
+*.vbs text eol=crlf
+*.ps1 text eol=crlf
+*.sh text eol=lf
+*.py text eol=lf
