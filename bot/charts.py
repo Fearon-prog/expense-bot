@@ -1,16 +1,18 @@
-"""PNG-диаграммы для отчётов: кольцевые схемы по категориям.
+"""PNG-диаграммы для отчётов: кольцевые схемы с подписями и процентами.
 
-Цвет каждой категории задаётся один раз на диаграмму и повторяется во всех
-панелях — так на семейном отчёте видно, что «Продукты» у всех одного цвета.
+Подписи стоят вокруг диаграммы, от каждой секции к своей подписи идёт
+стрелка. Цвет категории задаётся один раз на диаграмму и повторяется во всех
+панелях — на семейном отчёте «Продукты» у всех одного цвета.
 """
 
 from __future__ import annotations
 
 import io
+import math
 import os
 from pathlib import Path
 
-from .utils import format_money
+from .utils import format_money, percent
 
 
 def _configure_cache() -> None:
@@ -29,7 +31,6 @@ _configure_cache()
 
 from matplotlib.backends.backend_agg import FigureCanvasAgg  # noqa: E402
 from matplotlib.figure import Figure  # noqa: E402
-from matplotlib.patches import Patch  # noqa: E402
 
 PALETTE = (
     "#4E79A7",
@@ -52,6 +53,8 @@ PALETTE = (
 MUTED = "#B0B0B0"
 MAX_SLICES = 7
 MAX_PANELS = 6
+MIN_LABEL_GAP = 0.19
+LABEL_RADIUS = 1.38
 
 
 def _prepare(items: list[tuple[str, int]]) -> list[tuple[str, int]]:
@@ -87,17 +90,74 @@ def _colors_for(names: list[str]) -> dict[str, str]:
     }
 
 
+def _spread(entries: list[dict]) -> None:
+    """Раздвигает подписи по вертикали, чтобы они не наезжали друг на друга."""
+    entries.sort(key=lambda entry: entry["label_y"])
+    for index in range(1, len(entries)):
+        gap = entries[index]["label_y"] - entries[index - 1]["label_y"]
+        if gap < MIN_LABEL_GAP:
+            entries[index]["label_y"] = entries[index - 1]["label_y"] + MIN_LABEL_GAP
+
+
+def _label_wedges(axes, wedges, items: list[tuple[str, int]], colors: dict[str, str]) -> None:
+    total = sum(value for _, value in items)
+    entries: list[dict] = []
+
+    for wedge, (name, value) in zip(wedges, items):
+        angle = math.radians((wedge.theta1 + wedge.theta2) / 2.0)
+        cos_a, sin_a = math.cos(angle), math.sin(angle)
+        entries.append(
+            {
+                "name": name,
+                "value": value,
+                "cos": cos_a,
+                "sin": sin_a,
+                "side": 1 if cos_a >= 0 else -1,
+                "label_y": sin_a * 1.12,
+            }
+        )
+
+    _spread([entry for entry in entries if entry["side"] > 0])
+    _spread([entry for entry in entries if entry["side"] < 0])
+
+    for entry in entries:
+        share = percent(entry["value"], total) if total else 0
+        share_label = f"{share}%" if share else "<1%"
+        axes.annotate(
+            f"{entry['name']} · {share_label}",
+            xy=(entry["cos"] * 1.0, entry["sin"] * 1.0),
+            xytext=(entry["side"] * LABEL_RADIUS, entry["label_y"]),
+            ha="left" if entry["side"] > 0 else "right",
+            va="center",
+            fontsize=8,
+            color="#333333",
+            annotation_clip=False,
+            arrowprops={
+                "arrowstyle": "-|>",
+                "color": colors.get(entry["name"], "#888888"),
+                "lw": 0.9,
+                "shrinkA": 0,
+                "shrinkB": 0,
+                "mutation_scale": 7,
+            },
+        )
+
+    ys = [entry["label_y"] for entry in entries] or [0.0]
+    axes.set_xlim(-2.2, 2.2)
+    axes.set_ylim(min(-1.25, min(ys) - 0.15), max(1.25, max(ys) + 0.15))
+
+
 def _draw_donut(
     axes,
     items: list[tuple[str, int]],
     title: str,
     colors: dict[str, str],
     currency: str,
-) -> None:
+) -> list:
     values = [value for _, value in items]
     palette = [colors.get(name, MUTED) for name, _ in items]
 
-    axes.pie(
+    wedges, _ = axes.pie(
         values,
         colors=palette,
         startangle=90,
@@ -114,27 +174,10 @@ def _draw_donut(
         fontweight="bold",
         color="#333333",
     )
-    axes.set_title(title, fontsize=10.5, fontweight="bold", color="#333333", pad=10)
+    axes.set_title(title, fontsize=10.5, fontweight="bold", color="#333333", pad=12)
     axes.set_aspect("equal")
     axes.set_anchor("N")
-
-
-def _add_legend(fig: Figure, names: list[str], colors: dict[str, str]) -> int:
-    columns = min(4, max(1, len(names)))
-    handles = [
-        Patch(facecolor=colors[name], edgecolor="white", label=name) for name in names
-    ]
-    fig.legend(
-        handles=handles,
-        loc="lower center",
-        bbox_to_anchor=(0.5, 0.0),
-        ncol=columns,
-        frameon=False,
-        fontsize=8,
-        handlelength=1.2,
-        columnspacing=1.4,
-    )
-    return max(1, (len(names) + columns - 1) // columns)
+    return wedges
 
 
 def _to_png(fig: Figure) -> bytes:
@@ -157,21 +200,15 @@ def _build_panels(
     names = _ordered_names(panels)
     colors = _colors_for(names)
 
-    fig = Figure(figsize=(panel_width * len(panels), 4.5), dpi=150)
+    fig = Figure(figsize=(panel_width * len(panels), 4.4), dpi=150)
     FigureCanvasAgg(fig)
 
     axes_list = fig.subplots(1, len(panels), squeeze=False)[0]
     for axes, (title, items) in zip(axes_list, panels):
-        _draw_donut(axes, items, title, colors, currency)
+        wedges = _draw_donut(axes, items, title, colors, currency)
+        _label_wedges(axes, wedges, items, colors)
 
-    rows = _add_legend(fig, names, colors)
-    fig.subplots_adjust(
-        left=0.02,
-        right=0.98,
-        top=0.93,
-        bottom=0.04 + 0.055 * rows,
-        wspace=0.06,
-    )
+    fig.subplots_adjust(left=0.02, right=0.98, top=0.90, bottom=0.03, wspace=0.10)
     return _to_png(fig)
 
 
@@ -192,7 +229,7 @@ def expenses_income_chart(
     if not panels:
         return None
 
-    return _build_panels(panels, currency, panel_width=4.4)
+    return _build_panels(panels, currency, panel_width=4.6)
 
 
 def family_chart(
@@ -213,4 +250,4 @@ def family_chart(
             panels.append((short_name, prepared))
 
     panels = panels[:MAX_PANELS]
-    return _build_panels(panels, currency, panel_width=3.9)
+    return _build_panels(panels, currency, panel_width=4.2)
