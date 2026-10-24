@@ -23,5 +23,10 @@ class UserMiddleware(BaseMiddleware):
     async def __call__(self, handler, event: TelegramObject, data: dict[str, Any]):
         user = getattr(event, "from_user", None) or data.get("event_from_user")
         if user is not None:
-            await self.db.ensure_user(user.id, user.username, self.timezone_name)
+            await self.db.ensure_user(
+                user.id,
+                user.username,
+                self.timezone_name,
+                display_name=user.full_name,
+            )
         return await handler(event, data)

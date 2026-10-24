@@ -3,9 +3,72 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from datetime import date
 
 from bot.db import Database
+
+OLD_SCHEMA = """
+CREATE TABLE users (
+    user_id    INTEGER PRIMARY KEY,
+    username   TEXT,
+    timezone   TEXT NOT NULL DEFAULT 'Europe/Moscow',
+    created_at TEXT NOT NULL,
+    seeded     INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE categories (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL CHECK (kind IN ('expense', 'income')),
+    name       TEXT NOT NULL,
+    name_key   TEXT NOT NULL,
+    emoji      TEXT NOT NULL DEFAULT '',
+    position   INTEGER NOT NULL DEFAULT 1000,
+    created_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX ux_categories_name ON categories(user_id, kind, name_key);
+
+CREATE TABLE transactions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    category_id  INTEGER NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
+    kind         TEXT NOT NULL CHECK (kind IN ('expense', 'income')),
+    amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+    comment      TEXT,
+    spent_on     TEXT NOT NULL,
+    created_at   TEXT NOT NULL
+);
+"""
+
+
+def test_migration_from_old_schema(tmp_path) -> None:
+    """База прошлой версии получает display_name и таблицы семьи."""
+
+    async def scenario() -> None:
+        path = tmp_path / "old.db"
+        connection = sqlite3.connect(path)
+        connection.executescript(OLD_SCHEMA)
+        connection.commit()
+        connection.close()
+
+        db = Database(path)
+        await db.connect()
+        try:
+            async with db.conn.execute("PRAGMA table_info(users)") as cursor:
+                columns = {row["name"] for row in await cursor.fetchall()}
+            assert "display_name" in columns
+
+            await db.ensure_user(1, "ivan", "Europe/Moscow", display_name="Иван")
+            family = await db.create_family(1, "Семья")
+            assert family is not None
+            members = await db.get_family_members(family.id)
+            assert members[0].name == "Иван"
+        finally:
+            await db.close()
+
+    asyncio.run(scenario())
 
 
 def test_seed_categories_once(tmp_path) -> None:

@@ -9,7 +9,7 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from .models import Category, Transaction
+from .models import Category, FamilyMember, Transaction
 from .utils import PERIODS, PERIOD_LABELS, format_money
 
 BUTTON_TEXT_LIMIT = 34
@@ -36,8 +36,9 @@ def main_menu() -> InlineKeyboardMarkup:
     )
     builder.row(
         _button("🗂 Категории", "cat:menu"),
-        _button("📤 Экспорт", "exp:csv"),
+        _button("👨‍👩‍👧 Семья", "fam:menu"),
     )
+    builder.row(_button("📤 Экспорт", "exp:csv"))
     return builder.as_markup()
 
 
@@ -175,16 +176,98 @@ def after_category(kind: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def periods(active: str) -> InlineKeyboardMarkup:
+def periods(active: str, prefix: str = "rep") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     buttons = [
         _button(
             ("✅ " if period == active else "") + PERIOD_LABELS[period],
-            f"rep:{period}",
+            f"{prefix}:{period}",
         )
         for period in PERIODS
     ]
     builder.row(*buttons[:3])
     builder.row(*buttons[3:])
     builder.row(_button("🏠 Меню", "nav:menu"))
+    return builder.as_markup()
+
+
+def family_not_joined() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        _button("➕ Создать семью", "fam:create"),
+        _button("🔑 Войти по коду", "fam:join"),
+    )
+    builder.row(_button("🏠 Меню", "nav:menu"))
+    return builder.as_markup()
+
+
+def family_home() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        _button("📊 Отчёт семьи", "fam:rep:month"),
+        _button("📜 История семьи", "fam:history:0"),
+    )
+    builder.row(
+        _button("🔗 Пригласить", "fam:invite"),
+        _button("👥 Участники", "fam:members"),
+    )
+    builder.row(
+        _button("🚪 Выйти", "fam:leave"),
+        _button("🏠 Меню", "nav:menu"),
+    )
+    return builder.as_markup()
+
+
+def family_invite(share_url: str | None) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    if share_url:
+        builder.row(InlineKeyboardButton(text="🔗 Поделиться", url=share_url))
+    builder.row(_button("🔄 Новый код", "fam:code"))
+    builder.row(
+        _button("⬅️ Назад", "fam:menu"),
+        _button("🏠 Меню", "nav:menu"),
+    )
+    return builder.as_markup()
+
+
+def family_members(
+    members: list[FamilyMember],
+    can_remove: bool,
+    owner_id: int,
+) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    if can_remove:
+        for member in members:
+            if member.user_id == owner_id:
+                continue
+            builder.row(
+                _button(f"❌ {_short(member.name, 24)}", f"fam:kick:{member.user_id}")
+            )
+    builder.row(
+        _button("⬅️ Назад", "fam:menu"),
+        _button("🏠 Меню", "nav:menu"),
+    )
+    return builder.as_markup()
+
+
+def family_leave_confirm() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        _button("🚪 Да, выйти", "fam:leave_yes"),
+        _button("⬅️ Остаться", "fam:menu"),
+    )
+    return builder.as_markup()
+
+
+def family_history(page: int, pages: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    if page > 0:
+        builder.button(text="◀️", callback_data=f"fam:history:{page - 1}")
+    builder.button(text=f"{page + 1}/{pages}", callback_data="noop")
+    if page + 1 < pages:
+        builder.button(text="▶️", callback_data=f"fam:history:{page + 1}")
+    builder.row(
+        _button("⬅️ Назад", "fam:menu"),
+        _button("🏠 Меню", "nav:menu"),
+    )
     return builder.as_markup()

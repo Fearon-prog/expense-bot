@@ -13,7 +13,15 @@ from aiogram.types import BotCommand, ErrorEvent
 
 from .config import Config
 from .db import Database
-from .handlers import categories, common, export, history, reports, transactions
+from .handlers import (
+    categories,
+    common,
+    export,
+    family,
+    history,
+    reports,
+    transactions,
+)
 from .middlewares import UserMiddleware
 from .singleton import acquire_lock
 
@@ -94,6 +102,8 @@ def build_dispatcher(db: Database, config: Config) -> Dispatcher:
     dispatcher.message.outer_middleware(middleware)
     dispatcher.callback_query.outer_middleware(middleware)
 
+    # Семейный роутер первым: он обрабатывает /start с кодом приглашения.
+    dispatcher.include_router(family.router)
     dispatcher.include_router(common.router)
     dispatcher.include_router(transactions.router)
     dispatcher.include_router(history.router)

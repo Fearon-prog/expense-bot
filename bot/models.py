@@ -34,6 +34,7 @@ class Transaction:
     spent_on: date
     created_at: str
     category: Category
+    author_name: str | None = None
 
     @property
     def is_expense(self) -> bool:
@@ -61,3 +62,37 @@ class Totals:
     @property
     def is_empty(self) -> bool:
         return self.expense_count == 0 and self.income_count == 0
+
+
+@dataclass(frozen=True, slots=True)
+class Family:
+    id: int
+    name: str
+    invite_code: str
+    owner_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class FamilyMember:
+    user_id: int
+    name: str
+    role: str
+    joined_at: str
+
+    @property
+    def is_owner(self) -> bool:
+        return self.role == "owner"
+
+
+@dataclass(frozen=True, slots=True)
+class MemberTotal:
+    user_id: int
+    name: str
+    expense_minor: int = 0
+    expense_count: int = 0
+    income_minor: int = 0
+    income_count: int = 0
+
+    @property
+    def balance_minor(self) -> int:
+        return self.income_minor - self.expense_minor

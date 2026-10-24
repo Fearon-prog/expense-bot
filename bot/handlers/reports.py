@@ -27,7 +27,7 @@ router = Router(name="reports")
 MAX_CATEGORIES_IN_REPORT = 8
 
 
-def _category_block(
+def category_block(
     title: str,
     items: list[CategoryTotal],
     total_minor: int,
@@ -96,7 +96,7 @@ async def build_report(
     expense_categories = await db.totals_by_category(user_id, "expense", start, end)
     if expense_categories:
         lines.append("")
-        lines += _category_block(
+        lines += category_block(
             "🔴 Расходы по категориям",
             expense_categories,
             totals.expense_minor,
@@ -106,7 +106,7 @@ async def build_report(
     income_categories = await db.totals_by_category(user_id, "income", start, end)
     if income_categories:
         lines.append("")
-        lines += _category_block(
+        lines += category_block(
             "🟢 Доходы по категориям",
             income_categories,
             totals.income_minor,
