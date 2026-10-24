@@ -1,15 +1,18 @@
-"""Отчёты за период с разбивкой по категориям."""
+"""Отчёты за период с разбивкой по категориям и диаграммой."""
 
 from __future__ import annotations
 
-from aiogram import F, Router
+from dataclasses import dataclass, field
+
+from aiogram import Bot, F, Router
 from aiogram.types import CallbackQuery
 
+from ..charts import expenses_income_chart
 from ..config import Config
 from ..db import Database
 from ..keyboards import periods
 from ..models import CategoryTotal
-from ..ui import safe_edit
+from ..ui import clear_chart, safe_edit, send_chart
 from ..utils import (
     PERIOD_LABELS,
     esc,
@@ -25,6 +28,14 @@ from ..utils import (
 router = Router(name="reports")
 
 MAX_CATEGORIES_IN_REPORT = 8
+CHART_KEY = "personal"
+
+
+@dataclass(frozen=True)
+class ReportView:
+    text: str
+    expense: list[CategoryTotal] = field(default_factory=list)
+    income: list[CategoryTotal] = field(default_factory=list)
 
 
 def category_block(
@@ -61,7 +72,7 @@ async def build_report(
     config: Config,
     user_id: int,
     period: str,
-) -> str:
+) -> ReportView:
     today = config.today()
     start, end = period_bounds(period, today)
     totals = await db.totals(user_id, start, end)
@@ -73,16 +84,21 @@ async def build_report(
         lines.append(f"<i>{format_range(start, end)}</i>")
     lines.append("")
 
+    expense_categories = await db.totals_by_category(user_id, "expense", start, end)
+    income_categories = await db.totals_by_category(user_id, "income", start, end)
+
     if totals.is_empty:
         lines.append("За этот период операций нет.")
-        return "\n".join(lines)
+        return ReportView(text="\n".join(lines))
 
     currency = config.currency
     lines += [
         f"🟢 Доходы: <b>{format_money(totals.income_minor, currency)}</b> · "
-        f"{totals.income_count} {plural(totals.income_count, 'операция', 'операции', 'операций')}",
+        f"{totals.income_count} "
+        f"{plural(totals.income_count, 'операция', 'операции', 'операций')}",
         f"🔴 Расходы: <b>{format_money(totals.expense_minor, currency)}</b> · "
-        f"{totals.expense_count} {plural(totals.expense_count, 'операция', 'операции', 'операций')}",
+        f"{totals.expense_count} "
+        f"{plural(totals.expense_count, 'операция', 'операции', 'операций')}",
         "⚖️ Баланс: "
         f"<b>{format_money(totals.balance_minor, currency, with_sign=True)}</b>",
     ]
@@ -93,7 +109,6 @@ async def build_report(
             f"📈 В среднем в день: {format_money(totals.expense_minor // days, currency)}"
         )
 
-    expense_categories = await db.totals_by_category(user_id, "expense", start, end)
     if expense_categories:
         lines.append("")
         lines += category_block(
@@ -103,7 +118,6 @@ async def build_report(
             currency,
         )
 
-    income_categories = await db.totals_by_category(user_id, "income", start, end)
     if income_categories:
         lines.append("")
         lines += category_block(
@@ -113,7 +127,16 @@ async def build_report(
             currency,
         )
 
-    return "\n".join(lines)
+    return ReportView(
+        text="\n".join(lines),
+        expense=expense_categories,
+        income=income_categories,
+    )
+
+
+def _chart_slices(items: list[CategoryTotal]) -> list[tuple[str, int]]:
+    # Без emoji: в шрифте диаграмм нет их глифов, а цвет и так различает сектора.
+    return [(item.category.name, item.total_minor) for item in items]
 
 
 @router.callback_query(F.data.startswith("rep:"))
@@ -121,14 +144,35 @@ async def show_report(
     callback: CallbackQuery,
     db: Database,
     config: Config,
+    bot: Bot,
 ) -> None:
     parts = (callback.data or "").split(":", 1)
     period = parts[1] if len(parts) == 2 else "month"
     if period not in PERIOD_LABELS:
         period = "month"
 
-    text = await build_report(db, config, callback.from_user.id, period)
+    view = await build_report(db, config, callback.from_user.id, period)
     await callback.answer()
     if callback.message is None:
         return
-    await safe_edit(callback.message, text, periods(period))
+
+    await safe_edit(callback.message, view.text, periods(period))
+
+    png = expenses_income_chart(
+        _chart_slices(view.expense),
+        _chart_slices(view.income),
+        config.currency,
+    )
+    chat_id = callback.message.chat.id
+    if png is None:
+        await clear_chart(bot, chat_id, callback.from_user.id, CHART_KEY)
+        return
+
+    await send_chart(
+        bot,
+        chat_id,
+        callback.from_user.id,
+        CHART_KEY,
+        png,
+        caption=f"📊 Расходы и доходы · {period_title(period, config.today())}",
+    )

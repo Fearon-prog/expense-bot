@@ -725,6 +725,50 @@ class Database:
             row = await cursor.fetchone()
         return int(row["cnt"]) if row is not None else 0
 
+    async def family_member_categories(
+        self,
+        user_ids: Sequence[int],
+        kind: str,
+        start: date,
+        end: date,
+    ) -> dict[int, list[CategoryTotal]]:
+        """Категории в разрезе участников: кто на что потратил."""
+        if not user_ids:
+            return {}
+
+        query = f"""
+            SELECT t.user_id,
+                   MIN(c.name) AS name, MIN(c.emoji) AS emoji,
+                   SUM(t.amount_minor) AS total, COUNT(*) AS cnt
+            FROM transactions t
+            JOIN categories c ON c.id = t.category_id
+            WHERE t.user_id IN ({_placeholders(user_ids)})
+              AND t.kind = ? AND t.spent_on BETWEEN ? AND ?
+            GROUP BY t.user_id, c.name_key
+            ORDER BY t.user_id, total DESC
+        """
+        async with self.conn.execute(
+            query,
+            (*user_ids, kind, start.isoformat(), end.isoformat()),
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+        result: dict[int, list[CategoryTotal]] = {}
+        for row in rows:
+            result.setdefault(int(row["user_id"]), []).append(
+                CategoryTotal(
+                    category=Category(
+                        id=0,
+                        kind=kind,
+                        name=row["name"],
+                        emoji=row["emoji"] or "",
+                    ),
+                    total_minor=int(row["total"]),
+                    count=int(row["cnt"]),
+                )
+            )
+        return result
+
     # ---------------------------------------------------------------- reports
 
     async def totals(self, user_id: int, start: date, end: date) -> Totals:

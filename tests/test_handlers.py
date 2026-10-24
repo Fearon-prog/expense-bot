@@ -19,6 +19,7 @@ from aiogram.methods import (
     EditMessageText,
     SendDocument,
     SendMessage,
+    SendPhoto,
     TelegramMethod,
 )
 from aiogram.types import CallbackQuery, Chat, Message, Update, User
@@ -52,6 +53,15 @@ class FakeSession(BaseSession):
         name = type(method).__name__
         if name == "GetMe":
             return User(id=42, is_bot=True, first_name="TestBot", username="test_bot")
+        if name == "SendPhoto":
+            return Message(
+                message_id=500,
+                date=datetime.now(),
+                chat=Chat(id=int(getattr(method, "chat_id", 1)), type="private"),
+                caption=getattr(method, "caption", None),
+            )
+        if name == "DeleteMessage":
+            return True
         if name in {"SendMessage", "SendDocument", "EditMessageText"}:
             return Message(
                 message_id=getattr(method, "message_id", None) or 1,
@@ -62,6 +72,9 @@ class FakeSession(BaseSession):
         return True
 
     # -- помощники для проверок -------------------------------------------
+
+    def photos(self) -> list[SendPhoto]:
+        return [request for request in self.requests if isinstance(request, SendPhoto)]
 
     def texts(self) -> list[str]:
         return [
@@ -194,6 +207,7 @@ def test_full_user_flow(tmp_path) -> None:
             assert "1\u202f200,50" in report
             assert "50\u202f000" in report
             assert "Расходы по категориям" in report
+            assert len(session.photos()) == 1
 
             # 7. История.
             await send(callback_update("hist:page:0"))
@@ -262,13 +276,15 @@ def test_full_user_flow(tmp_path) -> None:
             await send(message_update("700 продукты", user=USER2))
             assert "Записано" in session.last_text()
 
-            # 15. Общий отчёт видит обоих.
+            # 15. Общий отчёт видит обоих и показывает, кто на что потратил.
             await send(callback_update("fam:rep:month"))
             family_report = session.last_text()
             assert "Ивановы" in family_report
             assert "Иван" in family_report
             assert "Мария" in family_report
             assert "700" in family_report
+            assert "Продукты 700" in family_report
+            assert len(session.photos()) == 2
 
             # 16. Общая история показывает автора операции.
             await send(callback_update("fam:history:0"))

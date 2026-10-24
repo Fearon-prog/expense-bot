@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass, field
 from urllib.parse import quote
 
 from aiogram import Bot, F, Router
@@ -11,6 +12,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
+from ..charts import family_chart
 from ..config import Config
 from ..db import Database
 from ..keyboards import (
@@ -24,8 +26,8 @@ from ..keyboards import (
     main_menu,
     periods,
 )
-from ..models import Family, FamilyMember
-from ..ui import safe_edit
+from ..models import CategoryTotal, Family, FamilyMember
+from ..ui import clear_chart, safe_edit, send_chart
 from ..utils import (
     PERIOD_LABELS,
     esc,
@@ -43,6 +45,7 @@ router = Router(name="family")
 PAGE_SIZE = 6
 MIN_NAME = 2
 MAX_NAME = 40
+CHART_KEY = "family"
 
 NOT_JOINED_TEXT = (
     "👨‍👩‍👧 <b>Семья</b>\n\n"
@@ -51,6 +54,13 @@ NOT_JOINED_TEXT = (
     "• Или введите код, который прислали вам.\n\n"
     "Записи и категории остаются личными — общими становятся только отчёты."
 )
+
+
+@dataclass(frozen=True)
+class FamilyReportView:
+    text: str
+    expense: list[CategoryTotal] = field(default_factory=list)
+    members: list[tuple[str, list[CategoryTotal]]] = field(default_factory=list)
 
 
 class FamilyForm(StatesGroup):
@@ -148,7 +158,7 @@ async def _build_report(
     family: Family,
     members: list[FamilyMember],
     period: str,
-) -> str:
+) -> FamilyReportView:
     user_ids = [member.user_id for member in members]
     today = config.today()
     start, end = period_bounds(period, today)
@@ -161,9 +171,11 @@ async def _build_report(
         lines.append(f"<i>{format_range(start, end)}</i>")
     lines.append("")
 
+    member_categories = await db.family_member_categories(user_ids, "expense", start, end)
+
     if totals.is_empty:
         lines.append("За этот период операций нет.")
-        return "\n".join(lines)
+        return FamilyReportView(text="\n".join(lines))
 
     currency = config.currency
     lines += [
@@ -182,10 +194,20 @@ async def _build_report(
     for member in members:
         stats = member_totals.get(member.user_id)
         lines.append(
-            f"{esc(member.name)} — "
+            f"<b>{esc(member.name)}</b> — "
             f"🔴 {format_money(stats.expense_minor if stats else 0, currency)} · "
             f"🟢 {format_money(stats.income_minor if stats else 0, currency)}"
         )
+        categories = member_categories.get(member.user_id, [])
+        if categories:
+            top = categories[:3]
+            parts = [
+                f"{esc(item.category.title)} {format_money(item.total_minor, currency)}"
+                for item in top
+            ]
+            rest = len(categories) - len(top)
+            suffix = f" · ещё {rest}" if rest else ""
+            lines.append("     " + " · ".join(parts) + suffix)
 
     expense_categories = await db.family_totals_by_category(user_ids, "expense", start, end)
     if expense_categories:
@@ -207,7 +229,14 @@ async def _build_report(
             currency,
         )
 
-    return "\n".join(lines)
+    return FamilyReportView(
+        text="\n".join(lines),
+        expense=expense_categories,
+        members=[
+            (member.name, member_categories.get(member.user_id, []))
+            for member in members
+        ],
+    )
 
 
 async def _show_history(
@@ -479,7 +508,12 @@ async def leave_finish(callback: CallbackQuery, db: Database) -> None:
 
 
 @router.callback_query(F.data.startswith("fam:rep:"))
-async def show_report(callback: CallbackQuery, db: Database, config: Config) -> None:
+async def show_report(
+    callback: CallbackQuery,
+    db: Database,
+    config: Config,
+    bot: Bot,
+) -> None:
     period = (callback.data or "").rsplit(":", 1)[-1]
     if period not in PERIOD_LABELS:
         period = "month"
@@ -490,11 +524,37 @@ async def show_report(callback: CallbackQuery, db: Database, config: Config) -> 
         return
 
     members = await db.get_family_members(family.id)
-    text = await _build_report(db, config, family, members, period)
+    view = await _build_report(db, config, family, members, period)
     await callback.answer()
     if callback.message is None:
         return
-    await safe_edit(callback.message, text, periods(period, prefix="fam:rep"))
+
+    await safe_edit(callback.message, view.text, periods(period, prefix="fam:rep"))
+
+    png = family_chart(
+        [(item.category.name, item.total_minor) for item in view.expense],
+        [
+            (
+                name,
+                [(item.category.name, item.total_minor) for item in items],
+            )
+            for name, items in view.members
+        ],
+        config.currency,
+    )
+    chat_id = callback.message.chat.id
+    if png is None:
+        await clear_chart(bot, chat_id, callback.from_user.id, CHART_KEY)
+        return
+
+    await send_chart(
+        bot,
+        chat_id,
+        callback.from_user.id,
+        CHART_KEY,
+        png,
+        caption=f"📊 Семья «{family.name}» · {period_title(period, config.today())}",
+    )
 
 
 @router.callback_query(F.data.startswith("fam:history:"))
