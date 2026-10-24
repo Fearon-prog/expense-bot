@@ -279,12 +279,12 @@ def family_history(page: int, pages: int) -> InlineKeyboardMarkup:
 
 def settings_currency(current: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    buttons = []
     for index, (symbol, name) in enumerate(CURRENCIES):
         prefix = "✅ " if symbol == current else ""
-        builder.button(
-            text=f"{prefix}{symbol} {name}",
-            callback_data=f"set:cur:{index}",
-        )
-    builder.adjust(2)
+        buttons.append(_button(f"{prefix}{symbol} {name}", f"set:cur:{index}"))
+
+    for index in range(0, len(buttons), 2):
+        builder.row(*buttons[index : index + 2])
     builder.row(_button("🏠 Меню", "nav:menu"))
     return builder.as_markup()

@@ -35,6 +35,7 @@ class Transaction:
     created_at: str
     category: Category
     author_name: str | None = None
+    batch_id: str | None = None
 
     @property
     def is_expense(self) -> bool:

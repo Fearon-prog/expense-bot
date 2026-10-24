@@ -64,11 +64,16 @@ _THOUSANDS = re.compile(r"(?<=\d)[.,](?=\d{3}(?!\d))")
 # Первое число в строке: «1 200,50», «450», «12.5».
 _NUMBER = re.compile(r"(?<!\d)(\d{1,3}(?:\s\d{3})+|\d+)(?:[.,](\d{1,2}))?(?!\d)")
 
-# «500 ₽», «1 200 руб.», «300 р», «$20».
+# «500 ₽», «1 200 руб.», «300 р», «$20», «500 ¥».
 _CURRENCY_TAIL = re.compile(
-    r"(?i)(?<=\d)\s*(?:₽|рублей|рубля|руб\.?|р\.?|rub\.?|rur\.?|usd\.?|eur\.?)(?![а-яёa-z])"
+    r"(?i)(?<=\d)\s*(?:₽|¥|рублей|рубля|руб\.?|р\.?|rub\.?|rur\.?|usd\.?|eur\.?|jpy)"
+    r"(?![а-яёa-z])"
 )
-_CURRENCY_SYMBOL = re.compile(r"[₽$€]")
+_CURRENCY_SYMBOL = re.compile(r"[₽$€¥₸₴£₾]")
+
+# Разделители списка трат: «обед 300 и ужин 300», «300; 200», «300, 200».
+_LIST_SPLIT = re.compile(r"\s*(?:\r\n|\r|\n|;|\+)\s*|,\s+|\s+и\s+", re.IGNORECASE)
+MAX_LIST_ITEMS = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +139,42 @@ def parse_amount(raw: str | None) -> ParsedAmount | None:
 
     comment = _normalize_comment(f"{text[: match.start()]} {text[match.end():]}")
     return ParsedAmount(amount_minor=amount_minor, comment=comment[:MAX_COMMENT_LENGTH])
+
+
+def parse_amounts(raw: str | None) -> list[ParsedAmount] | None:
+    """Разбирает одну сумму или список: «обед 300 и ужин 300».
+
+    Возвращает None, если хотя бы один элемент списка не является суммой.
+    """
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+
+    parts = [part.strip(" \t,;") for part in _LIST_SPLIT.split(text)]
+    parts = [part for part in parts if part]
+
+    if len(parts) <= 1:
+        single = parse_amount(text)
+        return [single] if single is not None else None
+
+    # «500 такси и метро» — это один расход с комментарием, а не список:
+    # в куске «метро» нет числа, поэтому разбираем строку целиком.
+    if not all(any(char.isdigit() for char in part) for part in parts):
+        single = parse_amount(text)
+        return [single] if single is not None else None
+
+    if len(parts) > MAX_LIST_ITEMS:
+        return None
+
+    parsed: list[ParsedAmount] = []
+    for part in parts:
+        item = parse_amount(part)
+        if item is None:
+            return None
+        parsed.append(item)
+    return parsed
 
 
 def format_money(

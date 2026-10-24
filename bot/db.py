@@ -61,7 +61,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
     comment      TEXT,
     spent_on     TEXT NOT NULL,
-    created_at   TEXT NOT NULL
+    created_at   TEXT NOT NULL,
+    batch_id     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS ix_transactions_user_date
@@ -92,6 +93,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_family_member_user
 
 _TX_SELECT = """
 SELECT t.id, t.kind, t.amount_minor, t.comment, t.spent_on, t.created_at,
+       t.batch_id,
        c.id AS cat_id, c.kind AS cat_kind, c.name AS cat_name, c.emoji AS cat_emoji
 FROM transactions t
 JOIN categories c ON c.id = t.category_id
@@ -121,6 +123,7 @@ def _to_transaction(row: aiosqlite.Row) -> Transaction:
             name=row["cat_name"],
             emoji=row["cat_emoji"],
         ),
+        batch_id=row["batch_id"],
     )
 
 
@@ -182,14 +185,19 @@ class Database:
     async def _migrate(self) -> None:
         """Дописывает колонки в базу, созданную прошлой версией бота."""
         async with self.conn.execute("PRAGMA table_info(users)") as cursor:
-            columns = {row["name"] for row in await cursor.fetchall()}
+            user_columns = {row["name"] for row in await cursor.fetchall()}
+        async with self.conn.execute("PRAGMA table_info(transactions)") as cursor:
+            tx_columns = {row["name"] for row in await cursor.fetchall()}
 
         changed = False
-        if "display_name" not in columns:
+        if "display_name" not in user_columns:
             await self.conn.execute("ALTER TABLE users ADD COLUMN display_name TEXT")
             changed = True
-        if "currency" not in columns:
+        if "currency" not in user_columns:
             await self.conn.execute("ALTER TABLE users ADD COLUMN currency TEXT")
+            changed = True
+        if "batch_id" not in tx_columns:
+            await self.conn.execute("ALTER TABLE transactions ADD COLUMN batch_id TEXT")
             changed = True
         if changed:
             await self.conn.commit()
@@ -350,6 +358,7 @@ class Database:
         amount_minor: int,
         comment: str | None,
         spent_on: date,
+        batch_id: str | None = None,
     ) -> int | None:
         """None, если категория не найдена или принадлежит другому пользователю."""
         category = await self.get_category(user_id, category_id)
@@ -359,8 +368,9 @@ class Database:
         cursor = await self.conn.execute(
             """
             INSERT INTO transactions(
-                user_id, category_id, kind, amount_minor, comment, spent_on, created_at
-            ) VALUES(?, ?, ?, ?, ?, ?, ?)
+                user_id, category_id, kind, amount_minor, comment,
+                spent_on, created_at, batch_id
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user_id,
@@ -370,10 +380,27 @@ class Database:
                 comment,
                 spent_on.isoformat(),
                 _now(),
+                batch_id,
             ),
         )
         await self.conn.commit()
         return int(cursor.lastrowid)
+
+    async def batch_transactions(self, user_id: int, batch_id: str) -> list[Transaction]:
+        async with self.conn.execute(
+            _TX_SELECT + " WHERE t.user_id = ? AND t.batch_id = ? ORDER BY t.id",
+            (user_id, batch_id),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [_to_transaction(row) for row in rows]
+
+    async def delete_transaction_batch(self, user_id: int, batch_id: str) -> int:
+        cursor = await self.conn.execute(
+            "DELETE FROM transactions WHERE user_id = ? AND batch_id = ?",
+            (user_id, batch_id),
+        )
+        await self.conn.commit()
+        return cursor.rowcount
 
     async def get_transaction(self, user_id: int, transaction_id: int) -> Transaction | None:
         async with self.conn.execute(

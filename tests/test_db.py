@@ -61,6 +61,10 @@ def test_migration_from_old_schema(tmp_path) -> None:
             assert "display_name" in columns
             assert "currency" in columns
 
+            async with db.conn.execute("PRAGMA table_info(transactions)") as cursor:
+                tx_columns = {row["name"] for row in await cursor.fetchall()}
+            assert "batch_id" in tx_columns
+
             await db.ensure_user(1, "ivan", "Europe/Moscow", display_name="Иван")
             family = await db.create_family(1, "Семья")
             assert family is not None
@@ -86,6 +90,42 @@ def test_user_currency(tmp_path) -> None:
 
             # У второго пользователя всё ещё валюта по умолчанию.
             assert await db.ensure_user(2, "maria", "Europe/Moscow") is None
+        finally:
+            await db.close()
+
+    asyncio.run(scenario())
+
+
+def test_transaction_batch(tmp_path) -> None:
+    async def scenario() -> None:
+        db = Database(tmp_path / "bot.db")
+        await db.connect()
+        try:
+            await db.ensure_user(1, "ivan", "Europe/Moscow")
+            category = (await db.list_categories(1, "expense"))[0]
+            today = date(2026, 10, 24)
+
+            first = await db.add_transaction(
+                1, category.id, 30000, "обед", today, batch_id="batch-1"
+            )
+            second = await db.add_transaction(
+                1, category.id, 30000, "ужин", today, batch_id="batch-1"
+            )
+            single = await db.add_transaction(1, category.id, 50000, None, today)
+            assert first and second and single
+
+            transaction = await db.get_transaction(1, first)
+            assert transaction is not None
+            assert transaction.batch_id == "batch-1"
+
+            batch = await db.batch_transactions(1, "batch-1")
+            assert [item.comment for item in batch] == ["обед", "ужин"]
+            assert sum(item.amount_minor for item in batch) == 60000
+
+            assert await db.delete_transaction_batch(1, "batch-1") == 2
+            assert await db.batch_transactions(1, "batch-1") == []
+            assert await db.count_transactions(1) == 1
+            assert await db.delete_transaction_batch(1, "batch-1") == 0
         finally:
             await db.close()
 

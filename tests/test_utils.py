@@ -10,6 +10,7 @@ from bot.utils import (
     format_money,
     format_range,
     parse_amount,
+    parse_amounts,
     period_bounds,
     plural,
     progress_bar,
@@ -51,6 +52,64 @@ def test_parse_amount_limits_comment_length() -> None:
     parsed = parse_amount("100 " + "я" * 250)
     assert parsed is not None
     assert len(parsed.comment) == 200
+
+
+def test_parse_amounts_single() -> None:
+    items = parse_amounts("450 такси")
+    assert items is not None
+    assert len(items) == 1
+    assert items[0].amount_minor == 45000
+    assert items[0].comment == "такси"
+
+
+def test_parse_amounts_list() -> None:
+    items = parse_amounts("обед 300 и ужин 300")
+    assert items is not None
+    assert [item.amount_minor for item in items] == [30000, 30000]
+    assert [item.comment for item in items] == ["обед", "ужин"]
+    assert sum(item.amount_minor for item in items) == 60000
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "обед 300, ужин 300",
+        "обед 300; ужин 300",
+        "обед 300 + ужин 300",
+        "обед 300\nужин 300",
+        "300 обед и 200 ужин",
+    ],
+)
+def test_parse_amounts_separators(raw: str) -> None:
+    items = parse_amounts(raw)
+    assert items is not None
+    assert len(items) == 2
+
+
+def test_parse_amounts_keeps_comment_with_and() -> None:
+    # «и» внутри комментария не должно превращать строку в список.
+    items = parse_amounts("500 такси и метро")
+    assert items is not None
+    assert len(items) == 1
+    assert items[0].comment == "такси и метро"
+
+    # Если во второй части нет числа — это один расход, а не список.
+    items = parse_amounts("обед 300 и ужин")
+    assert items is not None
+    assert len(items) == 1
+    assert items[0].amount_minor == 30000
+
+
+def test_parse_amounts_decimal_is_not_split() -> None:
+    items = parse_amounts("1 200,50 обед")
+    assert items is not None
+    assert len(items) == 1
+    assert items[0].amount_minor == 120050
+
+
+@pytest.mark.parametrize("raw", ["", "   ", None, "обед 0 и ужин 300", "обед 300 и 0"])
+def test_parse_amounts_invalid(raw: str | None) -> None:
+    assert parse_amounts(raw) is None
 
 
 def test_format_money() -> None:

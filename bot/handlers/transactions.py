@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -17,7 +19,7 @@ from ..keyboards import (
     transaction_saved,
 )
 from ..ui import safe_edit
-from ..utils import esc, format_date, format_money, parse_amount
+from ..utils import esc, format_date, format_money, parse_amounts, plural
 
 router = Router(name="transactions")
 
@@ -137,46 +139,73 @@ async def save_transaction(
         await message.answer("Отправьте сумму текстом, например: <code>450 такси</code>")
         return
 
-    parsed = parse_amount(message.text)
-    if parsed is None:
+    items = parse_amounts(message.text)
+    if items is None:
         await message.answer(
             "Не понял сумму 🤔\n\n"
-            "Напишите число: <code>450</code>, <code>1 200,50</code> "
-            "или <code>450 такси</code>."
+            "Можно одну трату: <code>450</code>, <code>1 200,50</code>, "
+            "<code>450 такси</code>.\n"
+            "Или списком: <code>обед 300 и ужин 300</code> — запишу двумя "
+            "операциями на 600."
         )
         return
 
     today = config.today()
-    transaction_id = await db.add_transaction(
-        user_id=message.from_user.id,
-        category_id=category.id,
-        amount_minor=parsed.amount_minor,
-        comment=parsed.comment or None,
-        spent_on=today,
-    )
-    if transaction_id is None:
+    batch_id = uuid.uuid4().hex if len(items) > 1 else None
+    transaction_ids: list[int] = []
+    for item in items:
+        transaction_id = await db.add_transaction(
+            user_id=message.from_user.id,
+            category_id=category.id,
+            amount_minor=item.amount_minor,
+            comment=item.comment or None,
+            spent_on=today,
+            batch_id=batch_id,
+        )
+        if transaction_id is None:
+            break
+        transaction_ids.append(transaction_id)
+
+    if len(transaction_ids) != len(items):
+        if batch_id is not None:
+            await db.delete_transaction_batch(message.from_user.id, batch_id)
         await state.clear()
-        await message.answer("Не удалось сохранить операцию. Попробуйте ещё раз.")
+        await message.answer("Не удалось сохранить операции. Попробуйте ещё раз.")
         return
 
     await state.clear()
     totals = await db.totals(message.from_user.id, today, today)
+    total_minor = sum(item.amount_minor for item in items)
 
-    text = (
-        "✅ <b>Записано</b>\n\n"
-        f"{esc(category.title)} — <b>{format_money(parsed.amount_minor, currency)}</b>\n"
-    )
-    if parsed.comment:
-        text += f"💬 {esc(parsed.comment)}\n"
+    if len(items) == 1:
+        parsed = items[0]
+        text = (
+            "✅ <b>Записано</b>\n\n"
+            f"{esc(category.title)} — <b>{format_money(parsed.amount_minor, currency)}</b>\n"
+        )
+        if parsed.comment:
+            text += f"💬 {esc(parsed.comment)}\n"
+    else:
+        text = (
+            f"✅ <b>Записано: {len(items)} "
+            f"{plural(len(items), 'операция', 'операции', 'операций')}</b>\n\n"
+            f"{esc(category.title)} — <b>{format_money(total_minor, currency)}</b>\n"
+        )
+        for item in items[:10]:
+            label = esc(item.comment) if item.comment else "без комментария"
+            text += f"• {label} — {format_money(item.amount_minor, currency)}\n"
+        if len(items) > 10:
+            text += f"…и ещё {len(items) - 10}\n"
+
     text += (
-        f"📅 {format_date(today)}\n\n"
+        f"\n📅 {format_date(today)}\n\n"
         f"Сегодня: 🔴 {format_money(totals.expense_minor, currency)} · "
         f"🟢 {format_money(totals.income_minor, currency)}"
     )
 
     await message.answer(
         text,
-        reply_markup=transaction_saved(transaction_id, category.kind),
+        reply_markup=transaction_saved(transaction_ids[0], category.kind),
     )
 
 
@@ -194,6 +223,28 @@ async def undo_transaction(
     transaction = await db.get_transaction(callback.from_user.id, transaction_id)
     if transaction is None:
         await callback.answer("Операция уже удалена.", show_alert=True)
+        return
+
+    if transaction.batch_id:
+        batch = await db.batch_transactions(callback.from_user.id, transaction.batch_id)
+        total_minor = sum(item.amount_minor for item in batch)
+        deleted = await db.delete_transaction_batch(
+            callback.from_user.id, transaction.batch_id
+        )
+        if not deleted:
+            await callback.answer("Операции уже удалены.", show_alert=True)
+            return
+
+        await callback.answer("Удалено")
+        if callback.message is None:
+            return
+        await safe_edit(
+            callback.message,
+            "🗑 <b>Удалено</b>\n\n"
+            f"{deleted} {plural(deleted, 'операция', 'операции', 'операций')} "
+            f"на {format_money(total_minor, currency)}",
+            main_menu(),
+        )
         return
 
     deleted = await db.delete_transaction(callback.from_user.id, transaction_id)

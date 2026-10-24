@@ -315,7 +315,27 @@ def test_full_user_flow(tmp_path) -> None:
             assert family_for_maria is not None
             assert family_for_maria.owner_id == 2
 
-            # 19. Выбор валюты в настройках.
+            # 19. Список трат одной строкой: две операции и общая сумма.
+            list_categories = await db.list_categories(1, "expense")
+            before = await db.count_transactions(1)
+
+            await send(callback_update("tx:new:expense"))
+            await send(callback_update(f"tx:pick:{list_categories[0].id}"))
+            await send(message_update("обед 300 и ужин 300"))
+
+            summary = session.last_text()
+            assert "600" in summary
+            assert "обед" in summary and "ужин" in summary
+            assert await db.count_transactions(1) == before + 2
+
+            last = (await db.list_transactions(1, 1, 0))[0]
+            assert last.batch_id is not None
+
+            await send(callback_update(f"tx:undo:{last.id}"))
+            assert "Удалено" in session.last_text()
+            assert await db.count_transactions(1) == before
+
+            # 20. Выбор валюты в настройках.
             await send(callback_update("set:menu"))
             assert "Настройки" in session.last_text()
 
@@ -327,11 +347,11 @@ def test_full_user_flow(tmp_path) -> None:
             assert "$" in session.last_text()
             assert "₽" not in session.last_text()
 
-            # 20. Справка.
+            # 21. Справка.
             await send(message_update("/help"))
             assert "Как пользоваться" in session.last_text()
 
-            # 21. Неизвестный текст подсказывает меню.
+            # 22. Неизвестный текст подсказывает меню.
             update_id += 100
             await send(message_update("привет", update_id=update_id))
             assert "Не понял" in session.last_text()
