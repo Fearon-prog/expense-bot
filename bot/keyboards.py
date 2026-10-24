@@ -9,6 +9,7 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from .currencies import CURRENCIES
 from .models import Category, FamilyMember, Transaction
 from .utils import PERIODS, PERIOD_LABELS, format_money
 
@@ -38,7 +39,10 @@ def main_menu() -> InlineKeyboardMarkup:
         _button("🗂 Категории", "cat:menu"),
         _button("👨‍👩‍👧 Семья", "fam:menu"),
     )
-    builder.row(_button("📤 Экспорт", "exp:csv"))
+    builder.row(
+        _button("📤 Экспорт", "exp:csv"),
+        _button("⚙️ Настройки", "set:menu"),
+    )
     return builder.as_markup()
 
 
@@ -270,4 +274,17 @@ def family_history(page: int, pages: int) -> InlineKeyboardMarkup:
         _button("⬅️ Назад", "fam:menu"),
         _button("🏠 Меню", "nav:menu"),
     )
+    return builder.as_markup()
+
+
+def settings_currency(current: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for index, (symbol, name) in enumerate(CURRENCIES):
+        prefix = "✅ " if symbol == current else ""
+        builder.button(
+            text=f"{prefix}{symbol} {name}",
+            callback_data=f"set:cur:{index}",
+        )
+    builder.adjust(2)
+    builder.row(_button("🏠 Меню", "nav:menu"))
     return builder.as_markup()

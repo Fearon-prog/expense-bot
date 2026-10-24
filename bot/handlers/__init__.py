@@ -1,6 +1,15 @@
 """Обработчики Telegram-апдейтов, сгруппированные по смыслу."""
 
-from . import categories, common, export, family, history, reports, transactions
+from . import (
+    categories,
+    common,
+    export,
+    family,
+    history,
+    reports,
+    settings,
+    transactions,
+)
 
 __all__ = [
     "categories",
@@ -9,5 +18,6 @@ __all__ = [
     "family",
     "history",
     "reports",
+    "settings",
     "transactions",
 ]

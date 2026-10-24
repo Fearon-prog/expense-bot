@@ -72,6 +72,7 @@ async def build_report(
     config: Config,
     user_id: int,
     period: str,
+    currency: str,
 ) -> ReportView:
     today = config.today()
     start, end = period_bounds(period, today)
@@ -91,7 +92,6 @@ async def build_report(
         lines.append("За этот период операций нет.")
         return ReportView(text="\n".join(lines))
 
-    currency = config.currency
     lines += [
         f"🟢 Доходы: <b>{format_money(totals.income_minor, currency)}</b> · "
         f"{totals.income_count} "
@@ -145,13 +145,14 @@ async def show_report(
     db: Database,
     config: Config,
     bot: Bot,
+    currency: str,
 ) -> None:
     parts = (callback.data or "").split(":", 1)
     period = parts[1] if len(parts) == 2 else "month"
     if period not in PERIOD_LABELS:
         period = "month"
 
-    view = await build_report(db, config, callback.from_user.id, period)
+    view = await build_report(db, config, callback.from_user.id, period, currency)
     await callback.answer()
     if callback.message is None:
         return
@@ -161,7 +162,7 @@ async def show_report(
     png = expenses_income_chart(
         _chart_slices(view.expense),
         _chart_slices(view.income),
-        config.currency,
+        currency,
     )
     chat_id = callback.message.chat.id
     if png is None:

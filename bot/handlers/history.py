@@ -1,4 +1,4 @@
-"""История операций: просмотр, подроби и удаление."""
+"""История операций: просмотр, подробности и удаление."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import math
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 
-from ..config import Config
 from ..db import Database
 from ..keyboards import history_item, history_page
 from ..ui import safe_edit
@@ -50,9 +49,9 @@ def _render_item(transaction, currency: str) -> str:
 async def render_history(
     message: Message,
     db: Database,
-    config: Config,
     user_id: int,
     page: int,
+    currency: str,
 ) -> None:
     total = await db.count_transactions(user_id)
     if total == 0:
@@ -60,7 +59,7 @@ async def render_history(
             message,
             "📜 <b>История</b>\n\nПока нет ни одной операции.\n"
             "Добавьте расход или доход — и они появятся здесь.",
-            history_page([], 0, 1, config.currency),
+            history_page([], 0, 1, currency),
         )
         return
 
@@ -73,12 +72,12 @@ async def render_history(
         f"Страница {page + 1} из {pages} · всего {total} "
         f"{plural(total, 'операция', 'операции', 'операций')}\n"
     )
-    body = "\n\n".join(_render_item(item, config.currency) for item in items)
+    body = "\n\n".join(_render_item(item, currency) for item in items)
 
     await safe_edit(
         message,
         f"{header}\n{body}",
-        history_page(items, page, pages, config.currency),
+        history_page(items, page, pages, currency),
     )
 
 
@@ -86,7 +85,7 @@ async def render_history(
 async def show_page(
     callback: CallbackQuery,
     db: Database,
-    config: Config,
+    currency: str,
 ) -> None:
     await callback.answer()
     if callback.message is None:
@@ -94,9 +93,9 @@ async def show_page(
     await render_history(
         callback.message,
         db,
-        config,
         callback.from_user.id,
         _parse_page(callback.data),
+        currency,
     )
 
 
@@ -104,7 +103,7 @@ async def show_page(
 async def show_item(
     callback: CallbackQuery,
     db: Database,
-    config: Config,
+    currency: str,
 ) -> None:
     transaction_id = _parse_id(callback.data)
     if transaction_id is None:
@@ -120,7 +119,7 @@ async def show_item(
     text = (
         f"<b>Операция #{transaction.id}</b>\n\n"
         f"{esc(transaction.category.title)}\n"
-        f"{kind}: <b>{format_money(transaction.amount_minor, config.currency)}</b>\n"
+        f"{kind}: <b>{format_money(transaction.amount_minor, currency)}</b>\n"
         f"📅 {format_date(transaction.spent_on)}"
     )
     if transaction.comment:
@@ -134,7 +133,7 @@ async def show_item(
 async def delete_item(
     callback: CallbackQuery,
     db: Database,
-    config: Config,
+    currency: str,
 ) -> None:
     transaction_id = _parse_id(callback.data)
     if transaction_id is None:
@@ -152,4 +151,4 @@ async def delete_item(
     if not deleted or callback.message is None:
         return
 
-    await render_history(callback.message, db, config, callback.from_user.id, 0)
+    await render_history(callback.message, db, callback.from_user.id, 0, currency)

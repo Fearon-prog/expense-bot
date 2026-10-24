@@ -59,12 +59,33 @@ def test_migration_from_old_schema(tmp_path) -> None:
             async with db.conn.execute("PRAGMA table_info(users)") as cursor:
                 columns = {row["name"] for row in await cursor.fetchall()}
             assert "display_name" in columns
+            assert "currency" in columns
 
             await db.ensure_user(1, "ivan", "Europe/Moscow", display_name="Иван")
             family = await db.create_family(1, "Семья")
             assert family is not None
             members = await db.get_family_members(family.id)
             assert members[0].name == "Иван"
+        finally:
+            await db.close()
+
+    asyncio.run(scenario())
+
+
+def test_user_currency(tmp_path) -> None:
+    async def scenario() -> None:
+        db = Database(tmp_path / "bot.db")
+        await db.connect()
+        try:
+            # По умолчанию валюта не выбрана — используется значение из .env.
+            assert await db.ensure_user(1, "ivan", "Europe/Moscow") is None
+
+            await db.set_user_currency(1, "€")
+            currency = await db.ensure_user(1, "ivan", "Europe/Moscow")
+            assert currency == "€"
+
+            # У второго пользователя всё ещё валюта по умолчанию.
+            assert await db.ensure_user(2, "maria", "Europe/Moscow") is None
         finally:
             await db.close()
 

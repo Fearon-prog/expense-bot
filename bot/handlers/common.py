@@ -34,7 +34,7 @@ HELP_TEXT = (
 )
 
 
-async def build_menu_text(db: Database, config: Config, user) -> str:
+async def build_menu_text(db: Database, config: Config, user, currency: str) -> str:
     today = config.today()
     totals = await db.totals(user.id, today.replace(day=1), today)
     name = esc(user.first_name or "друг")
@@ -51,20 +51,26 @@ async def build_menu_text(db: Database, config: Config, user) -> str:
     else:
         lines += [
             f"📅 <b>{MONTHS_NOM[today.month - 1]}</b>",
-            f"🔴 Расходы: <b>{format_money(totals.expense_minor, config.currency)}</b>",
-            f"🟢 Доходы: <b>{format_money(totals.income_minor, config.currency)}</b>",
+            f"🔴 Расходы: <b>{format_money(totals.expense_minor, currency)}</b>",
+            f"🟢 Доходы: <b>{format_money(totals.income_minor, currency)}</b>",
             "⚖️ Баланс: "
-            f"<b>{format_money(totals.balance_minor, config.currency, with_sign=True)}</b>",
+            f"<b>{format_money(totals.balance_minor, currency, with_sign=True)}</b>",
         ]
     lines += ["", "Что делаем? 👇"]
     return "\n".join(lines)
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext, db: Database, config: Config) -> None:
+async def cmd_start(
+    message: Message,
+    state: FSMContext,
+    db: Database,
+    config: Config,
+    currency: str,
+) -> None:
     await state.clear()
     await message.answer(
-        await build_menu_text(db, config, message.from_user),
+        await build_menu_text(db, config, message.from_user, currency),
         reply_markup=main_menu(),
     )
 
@@ -88,6 +94,7 @@ async def back_to_menu(
     state: FSMContext,
     db: Database,
     config: Config,
+    currency: str,
 ) -> None:
     await state.clear()
     await callback.answer()
@@ -95,7 +102,7 @@ async def back_to_menu(
         return
     await safe_edit(
         callback.message,
-        await build_menu_text(db, config, callback.from_user),
+        await build_menu_text(db, config, callback.from_user, currency),
         main_menu(),
     )
 

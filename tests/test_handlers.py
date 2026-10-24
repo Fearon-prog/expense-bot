@@ -162,7 +162,7 @@ def test_full_user_flow(tmp_path) -> None:
                 for row in start_message.reply_markup.inline_keyboard  # type: ignore[union-attr]
                 for button in row
             ]
-            assert len(keyboard_buttons) == 7
+            assert len(keyboard_buttons) == 8
 
             # 2. Выбор категории расхода.
             await send(callback_update("tx:new:expense"))
@@ -207,6 +207,7 @@ def test_full_user_flow(tmp_path) -> None:
             assert "1\u202f200,50" in report
             assert "50\u202f000" in report
             assert "Расходы по категориям" in report
+            assert "₽" in report
             assert len(session.photos()) == 1
 
             # 7. История.
@@ -269,6 +270,10 @@ def test_full_user_flow(tmp_path) -> None:
             members = await db.get_family_members(family.id)
             assert {member.name for member in members} == {"Иван", "Мария"}
 
+            # /start с посторонним payload просто показывает меню.
+            await send(message_update("/start promo", user=USER2))
+            assert "Привет" in session.last_text()
+
             # 14. Расход второго участника.
             categories2 = await db.list_categories(2, "expense")
             await send(callback_update("tx:new:expense", user=USER2))
@@ -310,11 +315,23 @@ def test_full_user_flow(tmp_path) -> None:
             assert family_for_maria is not None
             assert family_for_maria.owner_id == 2
 
-            # 19. Справка.
+            # 19. Выбор валюты в настройках.
+            await send(callback_update("set:menu"))
+            assert "Настройки" in session.last_text()
+
+            await send(callback_update("set:cur:1"))  # доллар
+            assert "Доллар США" in session.last_text()
+            assert await db.ensure_user(1, "ivan", "Europe/Moscow", display_name="Иван") == "$"
+
+            await send(callback_update("rep:month"))
+            assert "$" in session.last_text()
+            assert "₽" not in session.last_text()
+
+            # 20. Справка.
             await send(message_update("/help"))
             assert "Как пользоваться" in session.last_text()
 
-            # 20. Неизвестный текст подсказывает меню.
+            # 21. Неизвестный текст подсказывает меню.
             update_id += 100
             await send(message_update("привет", update_id=update_id))
             assert "Не понял" in session.last_text()

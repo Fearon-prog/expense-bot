@@ -112,6 +112,7 @@ async def save_transaction(
     state: FSMContext,
     db: Database,
     config: Config,
+    currency: str,
 ) -> None:
     data = await state.get_data()
     category_id = data.get("category_id")
@@ -160,7 +161,6 @@ async def save_transaction(
 
     await state.clear()
     totals = await db.totals(message.from_user.id, today, today)
-    currency = config.currency
 
     text = (
         "✅ <b>Записано</b>\n\n"
@@ -184,7 +184,7 @@ async def save_transaction(
 async def undo_transaction(
     callback: CallbackQuery,
     db: Database,
-    config: Config,
+    currency: str,
 ) -> None:
     transaction_id = _parse_id(callback.data)
     if transaction_id is None:
@@ -208,6 +208,6 @@ async def undo_transaction(
         callback.message,
         "🗑 <b>Удалено</b>\n\n"
         f"{esc(transaction.category.title)} — "
-        f"{format_money(transaction.amount_minor, config.currency)}",
+        f"{format_money(transaction.amount_minor, currency)}",
         main_menu(),
     )

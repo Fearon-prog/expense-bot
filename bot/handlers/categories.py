@@ -7,7 +7,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
-from ..config import Config
 from ..db import Database
 from ..keyboards import (
     after_category,
@@ -90,7 +89,7 @@ async def show_categories(callback: CallbackQuery, db: Database) -> None:
 
 
 @router.callback_query(F.data.startswith("cat:open:"))
-async def open_category(callback: CallbackQuery, db: Database, config: Config) -> None:
+async def open_category(callback: CallbackQuery, db: Database, currency: str) -> None:
     category_id = _parse_id(callback.data)
     if category_id is None:
         await callback.answer("Кнопка устарела.", show_alert=True)
@@ -108,7 +107,7 @@ async def open_category(callback: CallbackQuery, db: Database, config: Config) -
         text += (
             f"Операций: {count} "
             f"{plural(count, 'операция', 'операции', 'операций')} "
-            f"на {format_money(total_minor, config.currency)}"
+            f"на {format_money(total_minor, currency)}"
         )
     else:
         text += "Пока нет операций."

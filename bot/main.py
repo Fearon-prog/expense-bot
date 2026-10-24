@@ -20,6 +20,7 @@ from .handlers import (
     family,
     history,
     reports,
+    settings,
     transactions,
 )
 from .middlewares import UserMiddleware
@@ -98,7 +99,7 @@ def build_dispatcher(db: Database, config: Config) -> Dispatcher:
     dispatcher["db"] = db
     dispatcher["config"] = config
 
-    middleware = UserMiddleware(db, config.default_timezone)
+    middleware = UserMiddleware(db, config.default_timezone, config.currency)
     dispatcher.message.outer_middleware(middleware)
     dispatcher.callback_query.outer_middleware(middleware)
 
@@ -110,5 +111,6 @@ def build_dispatcher(db: Database, config: Config) -> Dispatcher:
     dispatcher.include_router(categories.router)
     dispatcher.include_router(reports.router)
     dispatcher.include_router(export.router)
+    dispatcher.include_router(settings.router)
     dispatcher.errors.register(on_error)
     return dispatcher

@@ -158,6 +158,7 @@ async def _build_report(
     family: Family,
     members: list[FamilyMember],
     period: str,
+    currency: str,
 ) -> FamilyReportView:
     user_ids = [member.user_id for member in members]
     today = config.today()
@@ -177,7 +178,6 @@ async def _build_report(
         lines.append("За этот период операций нет.")
         return FamilyReportView(text="\n".join(lines))
 
-    currency = config.currency
     lines += [
         f"🟢 Доходы: <b>{format_money(totals.income_minor, currency)}</b>",
         f"🔴 Расходы: <b>{format_money(totals.expense_minor, currency)}</b>",
@@ -242,10 +242,10 @@ async def _build_report(
 async def _show_history(
     message: Message,
     db: Database,
-    config: Config,
     family: Family,
     members: list[FamilyMember],
     page: int,
+    currency: str,
 ) -> None:
     user_ids = [member.user_id for member in members]
     total = await db.count_family_transactions(user_ids)
@@ -265,7 +265,7 @@ async def _show_history(
             mark = "🔴" if item.is_expense else "🟢"
             author = esc(item.author_name or "Участник")
             lines.append(
-                f"{author} · {mark} <b>{format_money(item.amount_minor, config.currency)}</b>"
+                f"{author} · {mark} <b>{format_money(item.amount_minor, currency)}</b>"
                 f" · {esc(item.category.title)} · {format_day(item.spent_on)}"
             )
             if item.comment:
@@ -398,6 +398,7 @@ async def start_with_payload(
     state: FSMContext,
     db: Database,
     config: Config,
+    currency: str,
 ) -> None:
     payload = (command.args or "").strip()
     await state.clear()
@@ -407,7 +408,7 @@ async def start_with_payload(
         return
 
     await message.answer(
-        await build_menu_text(db, config, message.from_user),
+        await build_menu_text(db, config, message.from_user, currency),
         reply_markup=main_menu(),
     )
 
@@ -513,6 +514,7 @@ async def show_report(
     db: Database,
     config: Config,
     bot: Bot,
+    currency: str,
 ) -> None:
     period = (callback.data or "").rsplit(":", 1)[-1]
     if period not in PERIOD_LABELS:
@@ -524,7 +526,7 @@ async def show_report(
         return
 
     members = await db.get_family_members(family.id)
-    view = await _build_report(db, config, family, members, period)
+    view = await _build_report(db, config, family, members, period, currency)
     await callback.answer()
     if callback.message is None:
         return
@@ -540,7 +542,7 @@ async def show_report(
             )
             for name, items in view.members
         ],
-        config.currency,
+        currency,
     )
     chat_id = callback.message.chat.id
     if png is None:
@@ -558,7 +560,7 @@ async def show_report(
 
 
 @router.callback_query(F.data.startswith("fam:history:"))
-async def show_history(callback: CallbackQuery, db: Database, config: Config) -> None:
+async def show_history(callback: CallbackQuery, db: Database, currency: str) -> None:
     try:
         page = int((callback.data or "").rsplit(":", 1)[1])
     except (IndexError, ValueError):
@@ -573,4 +575,4 @@ async def show_history(callback: CallbackQuery, db: Database, config: Config) ->
     await callback.answer()
     if callback.message is None:
         return
-    await _show_history(callback.message, db, config, family, members, page)
+    await _show_history(callback.message, db, family, members, page, currency)

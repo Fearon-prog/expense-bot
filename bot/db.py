@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS users (
     user_id      INTEGER PRIMARY KEY,
     username     TEXT,
     display_name TEXT,
+    currency     TEXT,
     timezone     TEXT NOT NULL DEFAULT 'Europe/Moscow',
     created_at   TEXT NOT NULL,
     seeded       INTEGER NOT NULL DEFAULT 0
@@ -182,8 +183,15 @@ class Database:
         """Дописывает колонки в базу, созданную прошлой версией бота."""
         async with self.conn.execute("PRAGMA table_info(users)") as cursor:
             columns = {row["name"] for row in await cursor.fetchall()}
+
+        changed = False
         if "display_name" not in columns:
             await self.conn.execute("ALTER TABLE users ADD COLUMN display_name TEXT")
+            changed = True
+        if "currency" not in columns:
+            await self.conn.execute("ALTER TABLE users ADD COLUMN currency TEXT")
+            changed = True
+        if changed:
             await self.conn.commit()
 
     async def close(self) -> None:
@@ -199,8 +207,8 @@ class Database:
         username: str | None,
         timezone_name: str,
         display_name: str | None = None,
-    ) -> None:
-        """Создаёт пользователя и его стартовые категории; безопасно вызывать всегда."""
+    ) -> str | None:
+        """Создаёт пользователя и его категории; возвращает выбранную валюту."""
         await self.conn.execute(
             """
             INSERT INTO users(user_id, username, display_name, timezone, created_at, seeded)
@@ -216,11 +224,22 @@ class Database:
         await self.conn.commit()
 
         async with self.conn.execute(
-            "SELECT seeded FROM users WHERE user_id = ?", (user_id,)
+            "SELECT seeded, currency FROM users WHERE user_id = ?", (user_id,)
         ) as cursor:
             row = await cursor.fetchone()
-        if row is not None and not row["seeded"]:
+        if row is None:
+            return None
+
+        if not row["seeded"]:
             await self._seed_categories(user_id)
+        return row["currency"]
+
+    async def set_user_currency(self, user_id: int, currency: str) -> None:
+        await self.conn.execute(
+            "UPDATE users SET currency = ? WHERE user_id = ?",
+            (currency, user_id),
+        )
+        await self.conn.commit()
 
     async def _seed_categories(self, user_id: int) -> None:
         created_at = _now()

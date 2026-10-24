@@ -20,6 +20,7 @@ async def export_csv(
     callback: CallbackQuery,
     db: Database,
     config: Config,
+    currency: str,
 ) -> None:
     transactions = await db.all_transactions(callback.from_user.id)
     if not transactions:
@@ -37,7 +38,7 @@ async def export_csv(
                 "Доход" if not transaction.is_expense else "Расход",
                 transaction.category.name,
                 f"{transaction.amount_minor / 100:.2f}".replace(".", ","),
-                config.currency,
+                currency,
                 transaction.comment or "",
             ]
         )
